@@ -13,12 +13,57 @@ static constexpr uint16_t potUpperThreshold{ 1012 };
 static constexpr uint16_t potRange{ potUpperThreshold - potLowerThreshold };
 
 // Output constants
-static constexpr float dynamicRange{ 1000.0f };
 static constexpr uint16_t pwmTop{ 16000 };
+static constexpr uint16_t pwmMin{ 16 };
+static constexpr float dynamicRange{ static_cast<float>(pwmTop) / static_cast<float>(pwmMin) };
+
+/*
+ * Exponential mapping
+ * -------------------
+ *
+ * Map the input range [k, k + potRange] exponentially onto
+ * [pwmMin, pwmMin * dr], where:
+ *
+ *     x = k             -> pwmMin
+ *     x = k + potRange  -> pwmMin * dr
+ *
+ * The desired relationship is:
+ *
+ *     f(x) = pwmMin * dr^((x - k) / potRange)
+ *
+ * Expressing the power as an exponential gives:
+ *
+ *     f(x) = exp( ln(pwmMin) + ln(dr) * (x - k) / potRange )
+ *
+ * Expanding and collecting the terms dependent on x:
+ *
+ *     f(x) = exp( x * ln(dr) / potRange
+ *                 - k * ln(dr) / potRange
+ *                 + ln(pwmMin) )
+ *
+ * Define the constants:
+ *
+ *     a = ln(dr) / potRange
+ *     b = a * k + ln(pwmMin)
+ *
+ * giving the compact form:
+ *
+ *     f(x) = exp(a * x + b)
+ *
+ * Thus the runtime calculation reduces to a single fused
+ * multiply-add followed by the exponential:
+ *
+ *     exponent = fmaf(a, x, b);
+ *     output   = expf(exponent);
+ *
+ * The constants a and b are calculated once; the only
+ * floating-point work required for each new input is therefore
+ * the affine transformation of x and the subsequent expf().
+ */
 
 // Pre-compute some more output constants
-static constexpr float b{ logf(dynamicRange) / static_cast<float>(potRange) };
-static constexpr float a{ logf(static_cast<float>(pwmTop)) - static_cast<float>(potUpperThreshold) * b };
+static constexpr float a{ logf(dynamicRange) / static_cast<float>(potRange) };
+static constexpr float b{ a * static_cast<float>(potLowerThreshold) + logf(static_cast<float>(pwmMin)) };
 
 // Time control
 static constexpr uint16_t loopIntervalMs{ 10 };  // Limit to 100Hz (10ms interval)
@@ -67,8 +112,6 @@ void setup() {
   pinMode(potentiometerPin, INPUT);
   analogReference(DEFAULT);
 
-  // Serial.begin(115200);
-
   uint16_t sensorValue = (uint16_t)analogRead(potentiometerPin);  // 0-1023
 
   for (uint16_t i = 0; i <= sensorValue; ++i) {
@@ -90,7 +133,7 @@ static uint16_t mapInputToOutputUsingExponentialCurve(uint16_t input) {
   if (input > potUpperThreshold) return pwmTop;  // LEDs 100%
 
   // Calculate the output using an exponential function
-  const float exponent{ b * static_cast<float>(input) + a };
+  const float exponent{ fmaf(a, static_cast<float>(input), b) };
   const uint16_t output{ static_cast<uint16_t>(expf(exponent)) };
 
   // Cap the output to the maximum allowed value
@@ -99,7 +142,6 @@ static uint16_t mapInputToOutputUsingExponentialCurve(uint16_t input) {
 
 static void pwm_16(uint16_t val) {
   if (val != OCR1A) {
-    // Serial.println(val);
     OCR1A = val;  // Duty cycle
   }
 }
@@ -108,18 +150,12 @@ static void update() {
   uint16_t sensorValue = (uint16_t)analogRead(potentiometerPin);  // 0-1023
 
   // Limit the rate of change to ±5 steps per iteration
-  int16_t delta = (sensorValue - previousPosition);
-  if (delta > maxStepChange) {
+  int16_t delta = static_cast<int16_t>(sensorValue - previousPosition);
+  if (delta > static_cast<int16_t>(maxStepChange)) {
     delta = maxStepChange;
-  } else if (delta < -maxStepChange) {
+  } else if (delta < -static_cast<int16_t>(maxStepChange)) {
     delta = -maxStepChange;
   }
-
-  // Serial.print(previousPosition);
-  // Serial.print(" ");
-  // Serial.print(sensorValue);
-  // Serial.print(" ");
-  // Serial.println(delta);
 
   // Exit function if value hasn't changed.
   if (delta == 0) {
