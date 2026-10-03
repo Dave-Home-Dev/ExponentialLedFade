@@ -13,9 +13,10 @@ static constexpr uint16_t potUpperThreshold{ 1012 };
 static constexpr uint16_t potRange{ potUpperThreshold - potLowerThreshold };
 
 // Output constants
-static constexpr uint16_t pwmTop{ 16000 };
+static constexpr uint16_t pwmBits{ 16000 };
+static constexpr uint16_t pwmTop{ pwmBits-1 }; // Count from 0 - pwmTop
 static constexpr uint16_t pwmMin{ 16 };
-static constexpr float dynamicRange{ static_cast<float>(pwmTop) / static_cast<float>(pwmMin) };
+static constexpr float dynamicRange{ static_cast<float>(pwmBits) / static_cast<float>(pwmMin) };
 
 /*
  * Exponential mapping
@@ -130,20 +131,25 @@ void setup() {
 static uint16_t mapInputToOutputUsingExponentialCurve(uint16_t input) {
   // Ensure the input value is within the expected range
   if (input < potLowerThreshold) return 0;       // LEDs off
-  if (input > potUpperThreshold) return pwmTop;  // LEDs 100%
+  if (input > potUpperThreshold) return pwmBits; // LEDs 100%
 
   // Calculate the output using an exponential function
   const float exponent{ fmaf(a, static_cast<float>(input), b) };
   const uint16_t output{ static_cast<uint16_t>(expf(exponent)) };
 
-  // Cap the output to the maximum allowed value
-  return min(output, pwmTop);
+  return output;
 }
 
+/// @note  In AVR, it is not possibe to express a PWM duty cycle of (N-1)/N, where N is the number of bit periods.
+///        If N = 100, ie ICR1 = 99, it is not possibe be possible to express a duty cycle of 99%.
+///        Example: Configure PWM to have 100 periods by setting ICR1 = 99.
+///            When OCR1A = 97 the duty cycle with be 97%
+///            When OCR1A = 98 the duty cycle with be 98%
+///            There will not be a 99% duty cycle!
+///            When OCR1A = 99 the duty cycle with be 100%
 static void pwm_16(uint16_t val) {
-  if (val != OCR1A) {
-    OCR1A = val;  // Duty cycle
-  }
+  // Cap the output to the maximum allowed OCR1A value for 100% PWM duty cycle.
+  OCR1A = min(val, pwmTop);  // Duty cycle
 }
 
 static void update() {
