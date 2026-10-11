@@ -13,9 +13,10 @@ static constexpr uint16_t potUpperThreshold{ 1012 };
 static constexpr uint16_t potRange{ potUpperThreshold - potLowerThreshold };
 
 // Output constants
-static constexpr uint16_t pwmBits{ 16000 };
+static constexpr uint16_t frequency{ 1000 };
+static constexpr uint16_t pwmBits{ 16000000 / frequency };
+static constexpr uint16_t pwmMin{ pwmBits / 1000 };
 static constexpr uint16_t pwmTop{ pwmBits-1 }; // Count from 0 - pwmTop
-static constexpr uint16_t pwmMin{ 16 };
 static constexpr float dynamicRange{ static_cast<float>(pwmBits) / static_cast<float>(pwmMin) };
 
 /*
@@ -89,16 +90,27 @@ void setup() {
   TCNT1 = 0;  // Reset Timer1 counter
 
   // Set non-inverting mode for output A (pin 9)
-  TCCR1A |= (1 << COM1A1);  // Clear OC1A on compare match, set at BOTTOM
+  TCCR1A |= (0x02 << COM1A0);  // Clear OC1A on compare match, set at BOTTOM
 
   // Set Fast PWM mode with ICR1 as TOP
-  TCCR1A |= (1 << WGM11);  // Fast PWM, mode 14 (WGM13:WGM10 = 1110)
-  TCCR1B |= (1 << WGM12);
-  TCCR1B |= (1 << WGM13);
+
+  static constexpr uint8_t WGM {14};  // Fast PWM, mode 14 (WGM13:WGM10 = 1110)
+  TCCR1A |= ((WGM & 0x03) << WGM10);
+  TCCR1B |= ((WGM & 0x0C) << (WGM12 - 2));
+
+  // Clock Select (Timer) 1
+  // 0 -> No clock source
+  // 1 -> /1
+  // 2 -> /8
+  // 3 -> /64
+  // 4 -> /256
+  // 5 -> /1024
+  // 6 -> Ext clk source, clock on falling edge
+  // 7 -> Ext clk source, clock on rising edge
 
   // Set no prescaler (full speed, 16 MHz clock)
-  TCCR1B |= (1 << CS10);  // CS12:0 = 001 -> No prescaler
-  //TCCR1B |= (1 << CS11); // Set prescaler to /64
+  static constexpr uint8_t CS {1};
+  TCCR1B |= CS << CS10; // Set prescaler
 
   // Set TOP value for the timer (ICR1)
   ICR1 = pwmTop;  // Timer1 TOP: counter runs from 0 to pwmTop, inclusive
